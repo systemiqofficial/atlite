@@ -1,0 +1,22 @@
+diff --git a/atlite/datasets/era5.py b/atlite/datasets/era5.py
+index 869ebf2..dcc109f 100644
+--- a/atlite/datasets/era5.py
++++ b/atlite/datasets/era5.py
+@@ -256,6 +256,17 @@ def sanitize_influx(ds):
+     return ds
+ 
+ 
++def get_data_temperature_offline(retrieval_params):
++    """
++    Get wind temperature for given retrieval parameters.
++    """
++    ds = xr.open_dataset(retrieval_params["bulk_path"])
++    ds = _rename_and_clean_coords(ds)
++    ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
++
++    return ds
++
++
+ def get_data_temperature(retrieval_params):
+     """
+     Get wind temperature for given retrieval parameters.

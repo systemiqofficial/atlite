@@ -247,7 +247,7 @@ index 34620d3..29b0391 100644
      features = atleast_1d(features) if features else slice(None)
      prepared = set(atleast_1d(cutout.data.attrs["prepared_features"]))
 diff --git a/atlite/datasets/era5.py b/atlite/datasets/era5.py
-index f234ba7..869ebf2 100644
+index f234ba7..dcc109f 100644
 --- a/atlite/datasets/era5.py
 +++ b/atlite/datasets/era5.py
 @@ -14,6 +14,7 @@ import logging
@@ -309,10 +309,10 @@ index f234ba7..869ebf2 100644
 +        ((ds["ssrd"] - ds["ssr"]) / ds["ssrd"].where(ds["ssrd"] != 0))
 +        .fillna(0.0)
 +        .assign_attrs(units="(0 - 1)", long_name="Albedo")
-+    )
+     )
 +    ds["influx_diffuse"] = (ds["ssrd"] - ds["influx_direct"]).assign_attrs(
 +        units="J m**-2", long_name="Surface diffuse solar radiation downwards"
-     )
++    )
 +    ds = ds.drop_vars([v for v in ds if v not in features["influx"]])
 +
 +    # Convert from energy to power J m**-2 -> W m**-2 and clip negative fluxes
@@ -355,7 +355,25 @@ index f234ba7..869ebf2 100644
  
      ds = _rename_and_clean_coords(ds)
  
-@@ -300,38 +362,42 @@ def noisy_unlink(path):
+@@ -194,6 +256,17 @@ def sanitize_influx(ds):
+     return ds
+ 
+ 
++def get_data_temperature_offline(retrieval_params):
++    """
++    Get wind temperature for given retrieval parameters.
++    """
++    ds = xr.open_dataset(retrieval_params["bulk_path"])
++    ds = _rename_and_clean_coords(ds)
++    ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
++
++    return ds
++
++
+ def get_data_temperature(retrieval_params):
+     """
+     Get wind temperature for given retrieval parameters.
+@@ -300,38 +373,42 @@ def noisy_unlink(path):
          logger.error(f"Unable to delete file {path}, as it is still in use.")
  
  
@@ -424,7 +442,7 @@ index f234ba7..869ebf2 100644
  
      ds = xr.open_dataset(target, chunks=chunks or {})
      if tmpdir is None:
-@@ -375,6 +441,7 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+@@ -375,6 +452,7 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
          Dataset of dask arrays of the retrieved variables.
      """
      coords = cutout.coords
@@ -432,7 +450,7 @@ index f234ba7..869ebf2 100644
  
      sanitize = creation_parameters.get("sanitize", True)
  
-@@ -387,10 +454,20 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+@@ -387,10 +465,20 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
          "lock": lock,
      }
  
@@ -454,7 +472,7 @@ index f234ba7..869ebf2 100644
  
      def retrieve_once(time):
          ds = func({**retrieval_params, **time})
-@@ -401,6 +478,13 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+@@ -401,6 +489,13 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
      if feature in static_features:
          return retrieve_once(retrieval_times(coords, static=True)).squeeze()
  
