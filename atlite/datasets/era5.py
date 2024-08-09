@@ -117,8 +117,8 @@ def get_data_wind_offline(retrieval_params):
     # span the whole circle: 0 is north, π/2 is east, -π is south, 3π/2 is west
     azimuth = np.arctan2(ds["u100"], ds["v100"])
     ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
-    ds = ds.drop_vars(["ssrd", "ssr", "fdir", "tisr", "u100", "v100"])
     ds = ds.rename({"fsr": "roughness"})
+    ds = ds.drop_vars([v for v in ds if v not in features["wind"]])
 
     return ds
 
@@ -174,7 +174,7 @@ def get_data_influx_offline(retrieval_params):
     ds["influx_diffuse"] = (ds["ssrd"] - ds["influx_direct"]).assign_attrs(
         units="J m**-2", long_name="Surface diffuse solar radiation downwards"
     )
-    ds = ds.drop_vars(["ssrd", "ssr", "u100", "v100", "fsr"])
+    ds = ds.drop_vars([v for v in ds if v not in features["influx"]])
 
     # Convert from energy to power J m**-2 -> W m**-2 and clip negative fluxes
     for a in ("influx_direct", "influx_diffuse", "influx_toa"):
