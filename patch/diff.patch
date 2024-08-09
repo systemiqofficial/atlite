@@ -1,0 +1,483 @@
+diff --git a/atlite/cutout.py b/atlite/cutout.py
+index 7c2aeee..1b8d10a 100644
+--- a/atlite/cutout.py
++++ b/atlite/cutout.py
+@@ -193,6 +193,56 @@ class Cutout:
+                 )
+         elif "data" in cutoutparams:
+             data = cutoutparams.pop("data")
++
++            data = data.chunk(chunks)
++            data.attrs.update(storable_chunks)
++            x = cutoutparams.pop("x")
++            y = cutoutparams.pop("y")
++            time = cutoutparams.pop("time")
++            module = cutoutparams.pop("module")
++            coords = get_coords(x, y, time, **cutoutparams)
++            attrs = {
++                "module": module,
++                "prepared_features": [],
++                **storable_chunks,
++                **cutoutparams,
++            }
++            # data = data.assign_coords({'x': coords['x'], 'y': coords['y']})
++            data = xr.Dataset(coords=coords, attrs=attrs, data_vars=data.data_vars)
++            logger.debug(attrs)
++            logger.debug(data.attrs)
++            # print(data.attrs)
++            # print(cutoutparams)
++        elif "bulk_path" in cutoutparams:
++            logger.info(f"Building cutout {path} from bulk data download")
++
++            if "bounds" in cutoutparams:
++                x1, y1, x2, y2 = cutoutparams.pop("bounds")
++                cutoutparams.update(x=slice(x1, x2), y=slice(y1, y2))
++
++            try:
++                x = cutoutparams.pop("x")
++                y = cutoutparams.pop("y")
++                time = cutoutparams.pop("time")
++                module = cutoutparams.pop("module")
++            except KeyError as exc:
++                raise TypeError(
++                    "Arguments 'time' and 'module' must be "
++                    "specified. Spatial bounds must either be "
++                    "passed via argument 'bounds' or 'x' and 'y'."
++                ) from exc
++
++            # TODO: check for dx, dy, x, y fine with module requirements
++            coords = get_coords(x, y, time, **cutoutparams)
++
++            attrs = {
++                "module": module,
++                "prepared_features": [],
++                **storable_chunks,
++                **cutoutparams,
++            }
++            data = xr.Dataset(coords=coords, attrs=attrs)
++
+         else:
+             logger.info(f"Building new cutout {path}")
+ 
+diff --git a/atlite/data.py b/atlite/data.py
+index 34620d3..29b0391 100644
+--- a/atlite/data.py
++++ b/atlite/data.py
+@@ -8,6 +8,7 @@ Management of data retrieval and structure.
+ """
+ 
+ import logging
++import sys
+ import os
+ from functools import wraps
+ from shutil import rmtree
+@@ -22,6 +23,8 @@ from numpy import atleast_1d
+ 
+ logger = logging.getLogger(__name__)
+ 
++logger.info("is this function active")
++
+ from atlite.datasets import modules as datamodules
+ 
+ 
+@@ -33,15 +36,20 @@ def get_features(cutout, module, features, tmpdir=None):
+     in `atlite.datasets` are allowed.
+     """
+     parameters = cutout.data.attrs
++    if "bulk_path" in parameters:
++        logger.info("we make it here and need to avoid a full data pull form cdsapi")
++
+     lock = SerializableLock()
+     datasets = []
+     get_data = datamodules[module].get_data
+ 
+     for feature in features:
++        logger.debug(f"features are {feature}")
+         feature_data = delayed(get_data)(
+             cutout, feature, tmpdir=tmpdir, lock=lock, **parameters
+         )
+         datasets.append(feature_data)
++    logger.debug(datasets)
+ 
+     datasets = compute(*datasets)
+ 
+@@ -71,6 +79,8 @@ def available_features(module=None):
+         obtained.
+     """
+     features = {name: m.features for name, m in datamodules.items()}
++    logger.info("do I make it here")
++    logger.debug(features)
+     features = (
+         pd.DataFrame(features)
+         .unstack()
+@@ -92,9 +102,14 @@ def non_bool_dict(d):
+ 
+ def maybe_remove_tmpdir(func):
+     "Use this wrapper to make tempfile deletion compatible with windows machines."
++    logger.info('I don"t get it')
+ 
+     @wraps(func)
+     def wrapper(*args, **kwargs):
++        logger.info("what")
++        logger.debug(kwargs)
++        logger.debug(args)
++
+         if kwargs.get("tmpdir", None):
+             res = func(*args, **kwargs)
+         else:
+@@ -153,12 +168,120 @@ def cutout_prepare(
+     cutout : atlite.Cutout
+         Cutout with prepared data. The variables are stored in `cutout.data`.
+     """
++    logger.info("Do i fuck up here? ")
++
++    if cutout.prepared and not overwrite:
++        logger.info("Cutout already prepared.")
++        return cutout
++
++    logger.info(f"Storing temporary files in {tmpdir}")
++
++    modules = atleast_1d(cutout.module)
++    features = atleast_1d(features) if features else slice(None)
++    prepared = set(atleast_1d(cutout.data.attrs["prepared_features"]))
++
++    # target is series of all available variables for given module and features
++    target = available_features(modules).loc[:, features].drop_duplicates()
++
++    for module in target.index.unique("module"):
++        missing_vars = target[module]
++        if not overwrite:
++            missing_vars = missing_vars[lambda v: ~v.isin(cutout.data)]
++        if missing_vars.empty:
++            continue
++        logger.info(f"Calculating and writing with module {module}:")
++        missing_features = missing_vars.index.unique("feature")
++        ds = get_features(cutout, module, missing_features, tmpdir=tmpdir)
++        prepared |= set(missing_features)
++
++        cutout.data.attrs.update(dict(prepared_features=list(prepared)))
++        attrs = non_bool_dict(cutout.data.attrs)
++        attrs.update(ds.attrs)
++
++        # Add optional compression to the newly prepared features
++        if compression:
++            for v in missing_vars:
++                ds[v].encoding.update(compression)
++
++        ds = cutout.data.merge(ds[missing_vars.values]).assign_attrs(**attrs)
++
++        # write data to tmp file, copy it to original data, this is much safer
++        # than appending variables
++        directory, filename = os.path.split(str(cutout.path))
++        fd, tmp = mkstemp(suffix=filename, dir=directory)
++        os.close(fd)
++
++        logger.debug("Writing cutout to file...")
++        # Delayed writing for large cutout
++        # cf. https://stackoverflow.com/questions/69810367/python-how-to-write-large-netcdf-with-xarray
++        write_job = ds.to_netcdf(tmp, compute=False)
++        with ProgressBar():
++            write_job.compute()
++        if cutout.path.exists():
++            cutout.data.close()
++            cutout.path.unlink()
++        os.rename(tmp, cutout.path)
++
++        cutout.data = xr.open_dataset(cutout.path, chunks=cutout.chunks)
++
++    return cutout
++
++
++@maybe_remove_tmpdir
++def cutout_prepare_wlocal(
++    cutout,
++    features=None,
++    tmpdir=None,
++    overwrite=False,
++    compression={"zlib": True, "complevel": 9, "shuffle": True},
++):
++    """
++    Prepare all or a selection of features in a cutout.
++
++    This function loads the feature data of a cutout, e.g. influx or runoff.
++    When not specifying the `feature` argument, all available features will be
++    loaded. The function compares the variables which are already included in
++    the cutout with the available variables of the modules specified by the
++    cutout. It detects missing variables and stores them into the netcdf file
++    of the cutout.
++
++
++    Parameters
++    ----------
++    cutout : atlite.Cutout
++    features : str/list, optional
++        Feature(s) to be prepared. The default slice(None) results in all
++        available features.
++    tmpdir : str/Path, optional
++        Directory in which temporary files (for example retrieved ERA5 netcdf
++        files) are stored. If set, the directory will not be deleted and the
++        intermediate files can be examined.
++    overwrite : bool, optional
++        Whether to overwrite variables which are already included in the
++        cutout. The default is False.
++    compression : None/dict, optional
++        Compression level to use for all features which are being prepared.
++        The compression is handled via xarray.Dataset.to_netcdf(...), for details see:
++        https://docs.xarray.dev/en/stable/generated/xarray.Dataset.to_netcdf.html .
++        To efficiently reduce cutout sizes, specify the number of 'least_significant_digits': n here.
++        To disable compression, set "complevel" to None.
++        Default is {'zlib': True, 'complevel': 9, 'shuffle': True}.
++
++    Returns
++    -------
++    cutout : atlite.Cutout
++        Cutout with prepared data. The variables are stored in `cutout.data`.
++    """
++    logger.info("Do i fuck up here? ")
++    logger.debug(cutout.prepared)
++
+     if cutout.prepared and not overwrite:
+         logger.info("Cutout already prepared.")
+         return cutout
+ 
+     logger.info(f"Storing temporary files in {tmpdir}")
+ 
++    logger.debug(cutout.module)
+     modules = atleast_1d(cutout.module)
+     features = atleast_1d(features) if features else slice(None)
+     prepared = set(atleast_1d(cutout.data.attrs["prepared_features"]))
+diff --git a/atlite/datasets/era5.py b/atlite/datasets/era5.py
+index f234ba7..869ebf2 100644
+--- a/atlite/datasets/era5.py
++++ b/atlite/datasets/era5.py
+@@ -14,6 +14,7 @@ import logging
+ import os
+ import warnings
+ import weakref
++import sys
+ from tempfile import mkstemp
+ 
+ import cdsapi
+@@ -103,6 +104,23 @@ def _rename_and_clean_coords(ds, add_lon_lat=True):
+ 
+     return ds
+ 
++def get_data_wind_offline(retrieval_params):
++    """
++    Get wind data for given retrieval parameters.
++    """
++    ds = xr.open_dataset(retrieval_params["bulk_path"])
++    ds = _rename_and_clean_coords(ds)
++
++    ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
++        units=ds["u100"].attrs["units"], long_name="100 metre wind speed"
++    )
++    # span the whole circle: 0 is north, π/2 is east, -π is south, 3π/2 is west
++    azimuth = np.arctan2(ds["u100"], ds["v100"])
++    ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
++    ds = ds.rename({"fsr": "roughness"})
++    ds = ds.drop_vars([v for v in ds if v not in features["wind"]])
++
++    return ds
+ 
+ def get_data_wind(retrieval_params):
+     """
+@@ -138,19 +156,63 @@ def sanitize_wind(ds):
+     return ds
+ 
+ 
+-def get_data_influx(retrieval_params):
++def get_data_influx_offline(retrieval_params):
+     """
+     Get influx data for given retrieval parameters.
+     """
+-    ds = retrieve_data(
+-        variable=[
+-            "surface_net_solar_radiation",
+-            "surface_solar_radiation_downwards",
+-            "toa_incident_solar_radiation",
+-            "total_sky_direct_solar_radiation_at_surface",
+-        ],
+-        **retrieval_params,
++    logger.info("This is influx OFFLINE!")
++    ds = xr.open_dataset(retrieval_params["bulk_path"])
++
++    ds = _rename_and_clean_coords(ds)
++
++    ds = ds.rename({"fdir": "influx_direct", "tisr": "influx_toa"})
++    ds["albedo"] = (
++        ((ds["ssrd"] - ds["ssr"]) / ds["ssrd"].where(ds["ssrd"] != 0))
++        .fillna(0.0)
++        .assign_attrs(units="(0 - 1)", long_name="Albedo")
++    )
++    ds["influx_diffuse"] = (ds["ssrd"] - ds["influx_direct"]).assign_attrs(
++        units="J m**-2", long_name="Surface diffuse solar radiation downwards"
+     )
++    ds = ds.drop_vars([v for v in ds if v not in features["influx"]])
++
++    # Convert from energy to power J m**-2 -> W m**-2 and clip negative fluxes
++    for a in ("influx_direct", "influx_diffuse", "influx_toa"):
++        ds[a] = ds[a] / (60.0 * 60.0)
++        ds[a].attrs["units"] = "W m**-2"
++
++    # ERA5 variables are mean values for previous hour, i.e. 13:01 to 14:00 are labelled as "14:00"
++    # account by calculating the SolarPosition for the center of the interval for aggregation happens
++    # see https://github.com/PyPSA/atlite/issues/158
++    # Do not show DeprecationWarning from new SolarPosition calculation (#199)
++    with warnings.catch_warnings():
++        warnings.simplefilter("ignore", DeprecationWarning)
++        time_shift = pd.to_timedelta("-30 minutes")
++        sp = SolarPosition(ds, time_shift=time_shift)
++    sp = sp.rename({v: f"solar_{v}" for v in sp.data_vars})
++
++    ds = xr.merge([ds, sp])
++
++    return ds
++
++def get_data_influx(retrieval_params):
++    """
++    Get influx data for given retrieval parameters.
++    """
++
++    if "bulk_path" in retrieval_params:
++        logger.info("is bulk path in the retrieval data?")
++        ds = xr.open_dataset(retrieval_params["bulk_path"]).squeeze()
++    else:
++        ds = retrieve_data(
++            variable=[
++                "surface_net_solar_radiation",
++                "surface_solar_radiation_downwards",
++                "toa_incident_solar_radiation",
++                "total_sky_direct_solar_radiation_at_surface",
++            ],
++            **retrieval_params,
++        )
+ 
+     ds = _rename_and_clean_coords(ds)
+ 
+@@ -300,38 +362,42 @@ def noisy_unlink(path):
+         logger.error(f"Unable to delete file {path}, as it is still in use.")
+ 
+ 
+-def retrieve_data(product, chunks=None, tmpdir=None, lock=None, **updates):
++def retrieve_data(product, chunks=None, tmpdir=None, lock=None, bulk_path=None,  **updates):
+     """
+     Download data like ERA5 from the Climate Data Store (CDS).
+ 
+     If you want to track the state of your request go to
+     https://cds.climate.copernicus.eu/cdsapp#!/yourrequests
+     """
+-    request = {"product_type": "reanalysis", "format": "netcdf"}
+-    request.update(updates)
+-
+-    assert {"year", "month", "variable"}.issubset(
+-        request
+-    ), "Need to specify at least 'variable', 'year' and 'month'"
+-
+-    client = cdsapi.Client(
+-        info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level
+-    )
+-    result = client.retrieve(product, request)
+-
+-    if lock is None:
+-        lock = nullcontext()
+-
+-    with lock:
+-        fd, target = mkstemp(suffix=".nc", dir=tmpdir)
+-        os.close(fd)
+-
+-        # Inform user about data being downloaded as "* variable (year-month)"
+-        timestr = f"{request['year']}-{request['month']}"
+-        variables = atleast_1d(request["variable"])
+-        varstr = "\n\t".join([f"{v} ({timestr})" for v in variables])
+-        logger.info(f"CDS: Downloading variables\n\t{varstr}\n")
+-        result.download(target)
++    if bulk_path:
++        logger.info("a bulkpath was supplied")
++        target = bulk_path
++    else:
++        request = {"product_type": "reanalysis", "format": "netcdf"}
++        request.update(updates)
++
++        assert {"year", "month", "variable"}.issubset(
++            request
++        ), "Need to specify at least 'variable', 'year' and 'month'"
++
++        client = cdsapi.Client(
++            info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level
++        )
++        result = client.retrieve(product, request)
++
++        if lock is None:
++            lock = nullcontext()
++
++        with lock:
++            fd, target = mkstemp(suffix=".nc", dir=tmpdir)
++            os.close(fd)
++
++            # Inform user about data being downloaded as "* variable (year-month)"
++            timestr = f"{request['year']}-{request['month']}"
++            variables = atleast_1d(request["variable"])
++            varstr = "\n\t".join([f"{v} ({timestr})" for v in variables])
++            logger.info(f"CDS: Downloading variables\n\t{varstr}\n")
++            result.download(target)
+ 
+     ds = xr.open_dataset(target, chunks=chunks or {})
+     if tmpdir is None:
+@@ -375,6 +441,7 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+         Dataset of dask arrays of the retrieved variables.
+     """
+     coords = cutout.coords
++    logger.debug(cutout.coords)
+ 
+     sanitize = creation_parameters.get("sanitize", True)
+ 
+@@ -387,10 +454,20 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+         "lock": lock,
+     }
+ 
+-    func = globals().get(f"get_data_{feature}")
++    # this needs be offline for bulkdata_present
++    if "bulk_path" in cutout.data.attrs:
++        retrieval_params = {
++        "bulk_path": cutout.data.attrs["bulk_path"]
++        }
++        func = globals().get(f"get_data_{feature}_offline")
++    else:
++        func = globals().get(f"get_data_{feature}")
+     sanitize_func = globals().get(f"sanitize_{feature}")
+ 
+     logger.info(f"Requesting data for feature {feature}...")
++    logger.info(f"A bulk download path has been supplied {retrieval_params['bulk_path']} \n No data will be pulled from era5")
++    logger.debug(retrieval_params)
++    logger.debug(feature)
+ 
+     def retrieve_once(time):
+         ds = func({**retrieval_params, **time})
+@@ -401,6 +478,13 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
+     if feature in static_features:
+         return retrieve_once(retrieval_times(coords, static=True)).squeeze()
+ 
++    some_time = retrieval_times(coords)
++    logger.info(some_time)
++    # if "bulk_path" in retrieval_params:
++    #     logger.debug(func)
++    #     ds = func({**retrieval_params})
++    #     logger.debug(ds)
++    # else:
+     datasets = map(retrieve_once, retrieval_times(coords))
+-
++    # sys.exit(0)
+     return xr.concat(datasets, dim="time").sel(time=coords["time"])
+diff --git a/atlite/gis.py b/atlite/gis.py
+index d68755d..ab767d1 100644
+--- a/atlite/gis.py
++++ b/atlite/gis.py
+@@ -299,6 +299,7 @@ def shape_availability(geometry, excluder):
+     assert geometry.crs == excluder.crs
+ 
+     bounds = rio.features.bounds(geometry)
++    logger.debug(bounds)
+     transform, shape = padded_transform_and_shape(bounds, res=excluder.res)
+     masked = geometry_mask(geometry, shape, transform)
+     exclusions = masked
