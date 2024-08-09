@@ -299,6 +299,7 @@ def shape_availability(geometry, excluder):
     assert geometry.crs == excluder.crs
 
     bounds = rio.features.bounds(geometry)
+    logger.debug(bounds)
     transform, shape = padded_transform_and_shape(bounds, res=excluder.res)
     masked = geometry_mask(geometry, shape, transform)
     exclusions = masked

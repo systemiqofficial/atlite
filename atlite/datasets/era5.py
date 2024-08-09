@@ -14,6 +14,7 @@ import logging
 import os
 import warnings
 import weakref
+import sys
 from tempfile import mkstemp
 
 import cdsapi
@@ -103,6 +104,23 @@ def _rename_and_clean_coords(ds, add_lon_lat=True):
 
     return ds
 
+def get_data_wind_offline(retrieval_params):
+    """
+    Get wind data for given retrieval parameters.
+    """
+    ds = xr.open_dataset(retrieval_params["bulk_path"])
+    ds = _rename_and_clean_coords(ds)
+
+    ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
+        units=ds["u100"].attrs["units"], long_name="100 metre wind speed"
+    )
+    # span the whole circle: 0 is north, π/2 is east, -π is south, 3π/2 is west
+    azimuth = np.arctan2(ds["u100"], ds["v100"])
+    ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
+    ds = ds.drop_vars(["ssrd", "ssr", "fdir", "tisr", "u100", "v100"])
+    ds = ds.rename({"fsr": "roughness"})
+
+    return ds
 
 def get_data_wind(retrieval_params):
     """
@@ -138,19 +156,63 @@ def sanitize_wind(ds):
     return ds
 
 
+def get_data_influx_offline(retrieval_params):
+    """
+    Get influx data for given retrieval parameters.
+    """
+    logger.info("This is influx OFFLINE!")
+    ds = xr.open_dataset(retrieval_params["bulk_path"])
+
+    ds = _rename_and_clean_coords(ds)
+
+    ds = ds.rename({"fdir": "influx_direct", "tisr": "influx_toa"})
+    ds["albedo"] = (
+        ((ds["ssrd"] - ds["ssr"]) / ds["ssrd"].where(ds["ssrd"] != 0))
+        .fillna(0.0)
+        .assign_attrs(units="(0 - 1)", long_name="Albedo")
+    )
+    ds["influx_diffuse"] = (ds["ssrd"] - ds["influx_direct"]).assign_attrs(
+        units="J m**-2", long_name="Surface diffuse solar radiation downwards"
+    )
+    ds = ds.drop_vars(["ssrd", "ssr", "u100", "v100", "fsr"])
+
+    # Convert from energy to power J m**-2 -> W m**-2 and clip negative fluxes
+    for a in ("influx_direct", "influx_diffuse", "influx_toa"):
+        ds[a] = ds[a] / (60.0 * 60.0)
+        ds[a].attrs["units"] = "W m**-2"
+
+    # ERA5 variables are mean values for previous hour, i.e. 13:01 to 14:00 are labelled as "14:00"
+    # account by calculating the SolarPosition for the center of the interval for aggregation happens
+    # see https://github.com/PyPSA/atlite/issues/158
+    # Do not show DeprecationWarning from new SolarPosition calculation (#199)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        time_shift = pd.to_timedelta("-30 minutes")
+        sp = SolarPosition(ds, time_shift=time_shift)
+    sp = sp.rename({v: f"solar_{v}" for v in sp.data_vars})
+
+    ds = xr.merge([ds, sp])
+
+    return ds
+
 def get_data_influx(retrieval_params):
     """
     Get influx data for given retrieval parameters.
     """
-    ds = retrieve_data(
-        variable=[
-            "surface_net_solar_radiation",
-            "surface_solar_radiation_downwards",
-            "toa_incident_solar_radiation",
-            "total_sky_direct_solar_radiation_at_surface",
-        ],
-        **retrieval_params,
-    )
+
+    if "bulk_path" in retrieval_params:
+        logger.info("is bulk path in the retrieval data?")
+        ds = xr.open_dataset(retrieval_params["bulk_path"]).squeeze()
+    else:
+        ds = retrieve_data(
+            variable=[
+                "surface_net_solar_radiation",
+                "surface_solar_radiation_downwards",
+                "toa_incident_solar_radiation",
+                "total_sky_direct_solar_radiation_at_surface",
+            ],
+            **retrieval_params,
+        )
 
     ds = _rename_and_clean_coords(ds)
 
@@ -300,38 +362,42 @@ def noisy_unlink(path):
         logger.error(f"Unable to delete file {path}, as it is still in use.")
 
 
-def retrieve_data(product, chunks=None, tmpdir=None, lock=None, **updates):
+def retrieve_data(product, chunks=None, tmpdir=None, lock=None, bulk_path=None,  **updates):
     """
     Download data like ERA5 from the Climate Data Store (CDS).
 
     If you want to track the state of your request go to
     https://cds.climate.copernicus.eu/cdsapp#!/yourrequests
     """
-    request = {"product_type": "reanalysis", "format": "netcdf"}
-    request.update(updates)
+    if bulk_path:
+        logger.info("a bulkpath was supplied")
+        target = bulk_path
+    else:
+        request = {"product_type": "reanalysis", "format": "netcdf"}
+        request.update(updates)
 
-    assert {"year", "month", "variable"}.issubset(
-        request
-    ), "Need to specify at least 'variable', 'year' and 'month'"
+        assert {"year", "month", "variable"}.issubset(
+            request
+        ), "Need to specify at least 'variable', 'year' and 'month'"
 
-    client = cdsapi.Client(
-        info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level
-    )
-    result = client.retrieve(product, request)
+        client = cdsapi.Client(
+            info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level
+        )
+        result = client.retrieve(product, request)
 
-    if lock is None:
-        lock = nullcontext()
+        if lock is None:
+            lock = nullcontext()
 
-    with lock:
-        fd, target = mkstemp(suffix=".nc", dir=tmpdir)
-        os.close(fd)
+        with lock:
+            fd, target = mkstemp(suffix=".nc", dir=tmpdir)
+            os.close(fd)
 
-        # Inform user about data being downloaded as "* variable (year-month)"
-        timestr = f"{request['year']}-{request['month']}"
-        variables = atleast_1d(request["variable"])
-        varstr = "\n\t".join([f"{v} ({timestr})" for v in variables])
-        logger.info(f"CDS: Downloading variables\n\t{varstr}\n")
-        result.download(target)
+            # Inform user about data being downloaded as "* variable (year-month)"
+            timestr = f"{request['year']}-{request['month']}"
+            variables = atleast_1d(request["variable"])
+            varstr = "\n\t".join([f"{v} ({timestr})" for v in variables])
+            logger.info(f"CDS: Downloading variables\n\t{varstr}\n")
+            result.download(target)
 
     ds = xr.open_dataset(target, chunks=chunks or {})
     if tmpdir is None:
@@ -375,6 +441,7 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
         Dataset of dask arrays of the retrieved variables.
     """
     coords = cutout.coords
+    logger.debug(cutout.coords)
 
     sanitize = creation_parameters.get("sanitize", True)
 
@@ -387,10 +454,20 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
         "lock": lock,
     }
 
-    func = globals().get(f"get_data_{feature}")
+    # this needs be offline for bulkdata_present
+    if "bulk_path" in cutout.data.attrs:
+        retrieval_params = {
+        "bulk_path": cutout.data.attrs["bulk_path"]
+        }
+        func = globals().get(f"get_data_{feature}_offline")
+    else:
+        func = globals().get(f"get_data_{feature}")
     sanitize_func = globals().get(f"sanitize_{feature}")
 
     logger.info(f"Requesting data for feature {feature}...")
+    logger.info(f"A bulk download path has been supplied {retrieval_params['bulk_path']} \n No data will be pulled from era5")
+    logger.debug(retrieval_params)
+    logger.debug(feature)
 
     def retrieve_once(time):
         ds = func({**retrieval_params, **time})
@@ -401,6 +478,13 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
     if feature in static_features:
         return retrieve_once(retrieval_times(coords, static=True)).squeeze()
 
+    some_time = retrieval_times(coords)
+    logger.info(some_time)
+    # if "bulk_path" in retrieval_params:
+    #     logger.debug(func)
+    #     ds = func({**retrieval_params})
+    #     logger.debug(ds)
+    # else:
     datasets = map(retrieve_once, retrieval_times(coords))
-
+    # sys.exit(0)
     return xr.concat(datasets, dim="time").sel(time=coords["time"])

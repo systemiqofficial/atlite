@@ -193,6 +193,56 @@ class Cutout:
                 )
         elif "data" in cutoutparams:
             data = cutoutparams.pop("data")
+
+            data = data.chunk(chunks)
+            data.attrs.update(storable_chunks)
+            x = cutoutparams.pop("x")
+            y = cutoutparams.pop("y")
+            time = cutoutparams.pop("time")
+            module = cutoutparams.pop("module")
+            coords = get_coords(x, y, time, **cutoutparams)
+            attrs = {
+                "module": module,
+                "prepared_features": [],
+                **storable_chunks,
+                **cutoutparams,
+            }
+            # data = data.assign_coords({'x': coords['x'], 'y': coords['y']})
+            data = xr.Dataset(coords=coords, attrs=attrs, data_vars=data.data_vars)
+            logger.debug(attrs)
+            logger.debug(data.attrs)
+            # print(data.attrs)
+            # print(cutoutparams)
+        elif "bulk_path" in cutoutparams:
+            logger.info(f"Building cutout {path} from bulk data download")
+
+            if "bounds" in cutoutparams:
+                x1, y1, x2, y2 = cutoutparams.pop("bounds")
+                cutoutparams.update(x=slice(x1, x2), y=slice(y1, y2))
+
+            try:
+                x = cutoutparams.pop("x")
+                y = cutoutparams.pop("y")
+                time = cutoutparams.pop("time")
+                module = cutoutparams.pop("module")
+            except KeyError as exc:
+                raise TypeError(
+                    "Arguments 'time' and 'module' must be "
+                    "specified. Spatial bounds must either be "
+                    "passed via argument 'bounds' or 'x' and 'y'."
+                ) from exc
+
+            # TODO: check for dx, dy, x, y fine with module requirements
+            coords = get_coords(x, y, time, **cutoutparams)
+
+            attrs = {
+                "module": module,
+                "prepared_features": [],
+                **storable_chunks,
+                **cutoutparams,
+            }
+            data = xr.Dataset(coords=coords, attrs=attrs)
+
         else:
             logger.info(f"Building new cutout {path}")
 
