@@ -484,9 +484,8 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
 
     # this needs be offline for bulkdata_present
     if "bulk_path" in cutout.data.attrs:
-        retrieval_params = {
-        "bulk_path": cutout.data.attrs["bulk_path"]
-        }
+        retrieval_params["bulk_path"]= cutout.data.attrs["bulk_path"]
+        
         func = globals().get(f"get_data_{feature}_offline")
     else:
         func = globals().get(f"get_data_{feature}")
