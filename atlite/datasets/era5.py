@@ -54,7 +54,7 @@ features = {
         "solar_altitude",
         "solar_azimuth",
     ],
-    "temperature": ["temperature", "soil temperature"],
+    "temperature_feature": ["temperature", "soil_temperature"],
     "runoff": ["runoff"],
 }
 
@@ -293,7 +293,6 @@ def get_data_temperature_offline(retrieval_params):
     ds = xr.open_dataset(retrieval_params["bulk_path"])
     area = retrieval_params['area']
     ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
-    ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
 
     print(f"retrieval_params: {retrieval_params}")
     print("")
@@ -303,6 +302,8 @@ def get_data_temperature_offline(retrieval_params):
     ds = _rename_and_clean_coords(ds)
 
     print(f"ds after clean coords: {ds}")
+
+    ds = ds.rename({"t2m": "temperature", "stl4": "soil_temperature"})
 
 
 
