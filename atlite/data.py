@@ -59,8 +59,8 @@ def get_features(cutout, module, features, tmpdir=None):
         fd = datamodules[module].features.items()
         print("fd")
         print(fd)
-        print("ds[v]")
-        print(ds[v])
+        print("ds[v].attrs")
+        print(ds[v].attrs)
         ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
