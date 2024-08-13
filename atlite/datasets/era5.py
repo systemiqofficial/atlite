@@ -478,6 +478,10 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
         "lock": lock,
     }
 
+    print("Retrieval params viewed in get_data(...)")
+    print(retrieval_params)
+    
+
     # this needs be offline for bulkdata_present
     if "bulk_path" in cutout.data.attrs:
         retrieval_params = {
