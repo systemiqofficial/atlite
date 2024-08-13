@@ -112,9 +112,12 @@ def get_data_wind_offline(retrieval_params):
     logger.info("This is wind offline!")
     
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+
+    print(f"Type of retrieval_params: {type(retrieval_params)}")
+    print(f"retrieval_params: {retrieval_params}")
     
-    print(type(ds))
-    print(ds)
+    print(f"Type of ds: {type(ds)}")
+    print(f"ds: {ds}")
 
     logger.info("retrieval_params['bulk_path']:")
     print(retrieval_params["bulk_path"])
