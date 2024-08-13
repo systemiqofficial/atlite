@@ -54,7 +54,7 @@ features = {
         "solar_altitude",
         "solar_azimuth",
     ],
-    "temperature_feature": ["temperature", "soil_temperature"],
+    "temperature": ["temp", "soil_temp"],
     "runoff": ["runoff"],
 }
 
@@ -303,7 +303,7 @@ def get_data_temperature_offline(retrieval_params):
 
     print(f"ds after clean coords: {ds}")
 
-    ds = ds.rename({"t2m": "temperature", "stl4": "soil_temperature"})
+    ds = ds.rename({"t2m": "temp", "stl4": "soil_temp"})
 
 
 
