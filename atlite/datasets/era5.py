@@ -108,7 +108,20 @@ def get_data_wind_offline(retrieval_params):
     """
     Get wind data for given retrieval parameters.
     """
+    
+    logger.info("This is wind offline!")
+    
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+    
+    logger.info("Type retrieval_params:")
+    print(type(retrieval_params))
+
+    logger.info("retrieval_params:")
+    print(retrieval_params)
+
+    logger.info("retrieval_params['bulk_path']:")
+    print(retrieval_params["bulk_path"])
+    
     ds = _rename_and_clean_coords(ds)
 
     ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
