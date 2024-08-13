@@ -109,21 +109,21 @@ def get_data_wind_offline(retrieval_params):
     Get wind data for given retrieval parameters.
     """
     
-    logger.info("This is wind offline!")
+    print("offline wind")
+    print("")
     
     ds = xr.open_dataset(retrieval_params["bulk_path"])
     area = retrieval_params['area']
     ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
-    print(f"Type of retrieval_params: {type(retrieval_params)}")
-    print(f"retrieval_params: {retrieval_params}")
-    
-    print(f"Type of ds: {type(ds)}")
-    print(f"ds: {ds}")
 
-    logger.info("retrieval_params['bulk_path']:")
-    print(retrieval_params["bulk_path"])
+    print(f"retrieval_params: {retrieval_params}")
+    print("")
+    print(f"ds after sel lat and long: {ds}")
+    print("")
     
     ds = _rename_and_clean_coords(ds)
+
+    print(f"ds after clean coords: {ds}")
 
     ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
         units=ds["u100"].attrs["units"], long_name="100 metre wind speed"
@@ -174,10 +174,22 @@ def get_data_influx_offline(retrieval_params):
     """
     Get influx data for given retrieval parameters.
     """
-    logger.info("This is influx OFFLINE!")
+    
+    print("offline influx")
+    print("")
+    
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+    area = retrieval_params['area']
+    ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
+
+    print(f"retrieval_params: {retrieval_params}")
+    print("")
+    print(f"ds after sel lat and long: {ds}")
+    print("")
 
     ds = _rename_and_clean_coords(ds)
+
+    print(f"ds after clean coords: {ds}")
 
     ds = ds.rename({"fdir": "influx_direct", "tisr": "influx_toa"})
     ds["albedo"] = (
@@ -274,8 +286,23 @@ def get_data_temperature_offline(retrieval_params):
     """
     Get wind temperature for given retrieval parameters.
     """
+    
+    print("offline temperature")
+    print("")
+    
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+    area = retrieval_params['area']
+    ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
+
+    print(f"retrieval_params: {retrieval_params}")
+    print("")
+    print(f"ds after sel lat and long: {ds}")
+    print("")
+    
     ds = _rename_and_clean_coords(ds)
+
+    print(f"ds after clean coords: {ds}")
+
     ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
 
     return ds
