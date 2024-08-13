@@ -113,7 +113,7 @@ def get_data_wind_offline(retrieval_params):
     
     ds = xr.open_dataset(retrieval_params["bulk_path"])
     area = retrieval_params['area']
-    ds = ds.sel(lat=slice(area[2], area[0]), lon=slice(area[1],area[3]))
+    ds = ds.sel(latitude=slice(area[2], area[0]), longitude=slice(area[1],area[3]))
     print(f"Type of retrieval_params: {type(retrieval_params)}")
     print(f"retrieval_params: {retrieval_params}")
     
