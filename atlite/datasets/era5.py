@@ -113,11 +113,8 @@ def get_data_wind_offline(retrieval_params):
     
     ds = xr.open_dataset(retrieval_params["bulk_path"])
     
-    logger.info("Type retrieval_params:")
-    print(type(retrieval_params))
-
-    logger.info("retrieval_params:")
-    print(retrieval_params)
+    print(type(ds))
+    print(ds)
 
     logger.info("retrieval_params['bulk_path']:")
     print(retrieval_params["bulk_path"])
