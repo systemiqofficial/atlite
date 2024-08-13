@@ -55,12 +55,17 @@ def get_features(cutout, module, features, tmpdir=None):
 
     ds = xr.merge(datasets, compat="equals")
     for v in ds:
+        print("this is v")
+        print(v)
+        print("")
         ds[v].attrs["module"] = module
         fd = datamodules[module].features.items()
         print("fd")
         print(fd)
+        print("")
         print("ds[v].attrs")
         print(ds[v].attrs)
+        print("")
         ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
