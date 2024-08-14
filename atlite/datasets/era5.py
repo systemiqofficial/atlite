@@ -544,4 +544,9 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
     # else:
     datasets = map(retrieve_once, retrieval_times(coords))
     # sys.exit(0)
+
+    print("Coords["time"]")
+    print(coords["time"])
+    print("")
+    
     return xr.concat(datasets, dim="time").sel(time=coords["time"])
