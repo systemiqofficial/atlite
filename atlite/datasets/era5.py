@@ -305,7 +305,7 @@ def get_data_temperature_offline(retrieval_params):
 
     ds = ds.rename({"t2m": "temp", "stl4": "soil_temp"})
 
-
+    ds = ds.drop_vars([v for v in ds if v not in features["temperature"]])
 
     return ds
 
