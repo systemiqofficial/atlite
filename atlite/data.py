@@ -53,8 +53,9 @@ def get_features(cutout, module, features, tmpdir=None):
         datasets.append(feature_data)
     logger.debug(datasets)
 
+    print(f"datasets before compute:{datasets}")
     datasets = compute(*datasets)
-    print(f"datasets:{datasets}")
+    print(f"datasets after compute:{datasets}")
 
     ds = xr.merge(datasets, compat="equals")
     print(f"ds:{ds}")
