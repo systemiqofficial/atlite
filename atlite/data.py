@@ -35,7 +35,9 @@ def get_features(cutout, module, features, tmpdir=None):
     This get the data for a set of features from a module. All modules
     in `atlite.datasets` are allowed.
     """
+    print("")
     print("GET_FEATURES FUNCTION")
+    print("")
     
     parameters = cutout.data.attrs
     if "bulk_path" in parameters:
@@ -53,26 +55,20 @@ def get_features(cutout, module, features, tmpdir=None):
         datasets.append(feature_data)
     logger.debug(datasets)
 
-    print(f"datasets before compute:{datasets}")
+    print("DATASETS BEFORE COMPUTE")
+    print(datasets)
+    print("")
+    
     datasets = compute(*datasets)
-    print(f"datasets after compute:{datasets}")
+    
+    print("DATASETS AFTER COMPUTE")
+    print("datasets")
+    print("")
 
     ds = xr.merge(datasets, compat="equals")
-    print(f"ds:{ds}")
     for v in ds:
-        print("this is v")
-        print(v)
-        print("")
         ds[v].attrs["module"] = module
         fd = datamodules[module].features.items()
-        print("fd")
-        print(fd)
-        print("")
-        print("ds[v].attrs")
-        print(ds[v].attrs)
-        print("")
-        print(f"list witout pop: {[k for k, l in fd if v in l]}")
-        print(f"list with pop: {[k for k, l in fd if v in l].pop()}")
         ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
@@ -184,8 +180,6 @@ def cutout_prepare(
     cutout : atlite.Cutout
         Cutout with prepared data. The variables are stored in `cutout.data`.
     """
-    logger.info("Do i fuck up here? ")
-
     if cutout.prepared and not overwrite:
         logger.info("Cutout already prepared.")
         return cutout
@@ -196,40 +190,18 @@ def cutout_prepare(
     features = atleast_1d(features) if features else slice(None)
     prepared = set(atleast_1d(cutout.data.attrs["prepared_features"]))
 
-    print("CUTOUT PREPARE FUNCTION")
-    print("")
-    print(f"modules: {modules}")
-    print("")
-    print(f"features: {features}")
-    print("")
-    print(f"prepared: {prepared}")
-    print("")
-
     # target is series of all available variables for given module and features
     target = available_features(modules).loc[:, features].drop_duplicates()
-
-    print(f"target: {target}")
-    print("")
-
     for module in target.index.unique("module"):
-        print(f"module: {module}")
-        print("")
         missing_vars = target[module]
-        print(f"missing_vars: {missing_vars}")
-        print("")
         if not overwrite:
             missing_vars = missing_vars[lambda v: ~v.isin(cutout.data)]
         if missing_vars.empty:
             continue
         logger.info(f"Calculating and writing with module {module}:")
         missing_features = missing_vars.index.unique("feature")
-        print(f"missing_features: {missing_features}")
-        print("")
-        print(f"cutout: {cutout}")
-        print("")
         ds = get_features(cutout, module, missing_features, tmpdir=tmpdir)
         prepared |= set(missing_features)
-
         cutout.data.attrs.update(dict(prepared_features=list(prepared)))
         attrs = non_bool_dict(cutout.data.attrs)
         attrs.update(ds.attrs)
