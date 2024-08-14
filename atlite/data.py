@@ -48,12 +48,16 @@ def get_features(cutout, module, features, tmpdir=None):
     get_data = datamodules[module].get_data
 
     for feature in features:
-        logger.debug(f"features are {feature}")
+        print("FEATURE")
+        print(feature)
+        print("")
         feature_data = delayed(get_data)(
             cutout, feature, tmpdir=tmpdir, lock=lock, **parameters
         )
+        print("FEATURE DATA")
+        print(feature_data)
+        print("")
         datasets.append(feature_data)
-    logger.debug(datasets)
 
     print("DATASETS BEFORE COMPUTE")
     print(datasets)
