@@ -35,6 +35,8 @@ def get_features(cutout, module, features, tmpdir=None):
     This get the data for a set of features from a module. All modules
     in `atlite.datasets` are allowed.
     """
+    print("GET_FEATURES FUNCTION")
+    
     parameters = cutout.data.attrs
     if "bulk_path" in parameters:
         logger.info("we make it here and need to avoid a full data pull form cdsapi")
@@ -52,8 +54,10 @@ def get_features(cutout, module, features, tmpdir=None):
     logger.debug(datasets)
 
     datasets = compute(*datasets)
+    print(f"datasets:{datasets}")
 
     ds = xr.merge(datasets, compat="equals")
+    print(f"ds:{ds}")
     for v in ds:
         print("this is v")
         print(v)
