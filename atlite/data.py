@@ -189,17 +189,37 @@ def cutout_prepare(
     features = atleast_1d(features) if features else slice(None)
     prepared = set(atleast_1d(cutout.data.attrs["prepared_features"]))
 
+    print("CUTOUT PREPARE FUNCTION")
+    print("")
+    print(f"modules: {modules}")
+    print("")
+    print(f"features: {features}")
+    print("")
+    print(f"prepared: {prepared}")
+    print("")
+
     # target is series of all available variables for given module and features
     target = available_features(modules).loc[:, features].drop_duplicates()
 
+    print(f"target: {target}")
+    print("")
+
     for module in target.index.unique("module"):
+        print(f"module: {module}")
+        print("")
         missing_vars = target[module]
+        print(f"missing_vars: {missing_vars}")
+        print("")
         if not overwrite:
             missing_vars = missing_vars[lambda v: ~v.isin(cutout.data)]
         if missing_vars.empty:
             continue
         logger.info(f"Calculating and writing with module {module}:")
         missing_features = missing_vars.index.unique("feature")
+        print(f"missing_features: {missing_features}")
+        print("")
+        print(f"cutout: {cutout}")
+        print("")
         ds = get_features(cutout, module, missing_features, tmpdir=tmpdir)
         prepared |= set(missing_features)
 
