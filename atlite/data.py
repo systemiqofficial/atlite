@@ -66,6 +66,8 @@ def get_features(cutout, module, features, tmpdir=None):
         print("ds[v].attrs")
         print(ds[v].attrs)
         print("")
+        print(f"{list witout pop: {[k for k, l in fd if v in l]}")
+        print(f"{list with pop: {[k for k, l in fd if v in l].pop()}")
         ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
     return ds
 
