@@ -12,6 +12,10 @@ import xarray as xr
 
 
 def aggregate_matrix(da, matrix, index):
+    print("")
+    print("index")
+    print(index)
+    print("")
     if index.name is None:
         index = index.rename("dim_0")
     if isinstance(da.data, dask.array.core.Array):
