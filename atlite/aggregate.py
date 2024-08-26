@@ -12,15 +12,16 @@ import xarray as xr
 
 
 def aggregate_matrix(da, matrix, index):
-    print("")
-    print("index")
-    print(index)
-    print("")
     if index.name is None:
         index = index.rename("dim_0")
     if isinstance(da.data, dask.array.core.Array):
         da = da.stack(spatial=("y", "x"))
         da = da.chunk(dict(spatial=-1))
+        print("")
+        print("shapes in aggregate.py")
+        print(da.shape)
+        print(matrix.shape)
+        print("")
         return xr.apply_ufunc(
             lambda da: da * matrix.T,
             da,
