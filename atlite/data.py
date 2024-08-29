@@ -34,7 +34,7 @@ def get_features(cutout, module, features, tmpdir=None):
 
     This get the data for a set of features from a module. All modules
     in `atlite.datasets` are allowed.
-    """
+    """ 
     parameters = cutout.data.attrs
     if "bulk_path" in parameters:
         logger.info("we make it here and need to avoid a full data pull form cdsapi")
@@ -44,13 +44,11 @@ def get_features(cutout, module, features, tmpdir=None):
     get_data = datamodules[module].get_data
 
     for feature in features:
-        logger.debug(f"features are {feature}")
         feature_data = delayed(get_data)(
             cutout, feature, tmpdir=tmpdir, lock=lock, **parameters
         )
         datasets.append(feature_data)
-    logger.debug(datasets)
-
+    
     datasets = compute(*datasets)
 
     ds = xr.merge(datasets, compat="equals")
@@ -168,8 +166,6 @@ def cutout_prepare(
     cutout : atlite.Cutout
         Cutout with prepared data. The variables are stored in `cutout.data`.
     """
-    logger.info("Do i fuck up here? ")
-
     if cutout.prepared and not overwrite:
         logger.info("Cutout already prepared.")
         return cutout
@@ -182,7 +178,6 @@ def cutout_prepare(
 
     # target is series of all available variables for given module and features
     target = available_features(modules).loc[:, features].drop_duplicates()
-
     for module in target.index.unique("module"):
         missing_vars = target[module]
         if not overwrite:
@@ -193,7 +188,6 @@ def cutout_prepare(
         missing_features = missing_vars.index.unique("feature")
         ds = get_features(cutout, module, missing_features, tmpdir=tmpdir)
         prepared |= set(missing_features)
-
         cutout.data.attrs.update(dict(prepared_features=list(prepared)))
         attrs = non_bool_dict(cutout.data.attrs)
         attrs.update(ds.attrs)

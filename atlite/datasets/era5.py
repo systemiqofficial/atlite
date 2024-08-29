@@ -107,8 +107,10 @@ def _rename_and_clean_coords(ds, add_lon_lat=True):
 def get_data_wind_offline(retrieval_params):
     """
     Get wind data for given retrieval parameters.
-    """
+    """    
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+    area = retrieval_params['area']
+    ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))    
     ds = _rename_and_clean_coords(ds)
 
     ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
@@ -160,9 +162,9 @@ def get_data_influx_offline(retrieval_params):
     """
     Get influx data for given retrieval parameters.
     """
-    logger.info("This is influx OFFLINE!")
     ds = xr.open_dataset(retrieval_params["bulk_path"])
-
+    area = retrieval_params['area']
+    ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
     ds = _rename_and_clean_coords(ds)
 
     ds = ds.rename({"fdir": "influx_direct", "tisr": "influx_toa"})
@@ -261,8 +263,11 @@ def get_data_temperature_offline(retrieval_params):
     Get wind temperature for given retrieval parameters.
     """
     ds = xr.open_dataset(retrieval_params["bulk_path"])
+    area = retrieval_params['area']
+    ds = ds.sel(latitude=slice(area[0], area[2]), longitude=slice(area[1],area[3]))
     ds = _rename_and_clean_coords(ds)
     ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
+    ds = ds.drop_vars([v for v in ds if v not in features["temperature"]])
 
     return ds
 
@@ -286,7 +291,6 @@ def get_data_runoff(retrieval_params):
     Get runoff data for given retrieval parameters.
     """
     ds = retrieve_data(variable=["runoff"], **retrieval_params)
-
     ds = _rename_and_clean_coords(ds)
     ds = ds.rename({"ro": "runoff"})
 
@@ -467,9 +471,8 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
 
     # this needs be offline for bulkdata_present
     if "bulk_path" in cutout.data.attrs:
-        retrieval_params = {
-        "bulk_path": cutout.data.attrs["bulk_path"]
-        }
+        retrieval_params["bulk_path"]= cutout.data.attrs["bulk_path"]
+        
         func = globals().get(f"get_data_{feature}_offline")
     else:
         func = globals().get(f"get_data_{feature}")
@@ -498,4 +501,5 @@ def get_data(cutout, feature, tmpdir, lock=None, **creation_parameters):
     # else:
     datasets = map(retrieve_once, retrieval_times(coords))
     # sys.exit(0)
+    
     return xr.concat(datasets, dim="time").sel(time=coords["time"])
