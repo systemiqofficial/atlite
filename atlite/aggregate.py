@@ -17,11 +17,6 @@ def aggregate_matrix(da, matrix, index):
     if isinstance(da.data, dask.array.core.Array):
         da = da.stack(spatial=("y", "x"))
         da = da.chunk(dict(spatial=-1))
-        print("")
-        print("shapes in aggregate.py")
-        print(da.shape)
-        print(matrix.shape)
-        print("")
         return xr.apply_ufunc(
             lambda da: da * matrix.T,
             da,

@@ -171,11 +171,6 @@ def convert_and_aggregate(
     if index is None:
         index = pd.RangeIndex(matrix.shape[0])
 
-    print("")
-    print("shapes da and matrix")
-    print(da.shape)
-    print(matrix.shape)
-    print("")
     results = aggregate_matrix(da, matrix=matrix, index=index)
 
     if per_unit or return_capacity:
