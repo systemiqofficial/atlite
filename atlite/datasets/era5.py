@@ -54,7 +54,7 @@ features = {
         "solar_altitude",
         "solar_azimuth",
     ],
-    "temperature": ["temperature", "soil temperature", "dewpoint temperature"],
+    "temperature": ["temperature", "soil temperature"],
     "runoff": ["runoff"],
 }
 
