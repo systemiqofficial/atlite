@@ -89,9 +89,7 @@ def _rename_and_clean_coords(ds, add_lon_lat=True):
     if "valid_time" in ds.sizes:
         ds = ds.rename({"valid_time": "time"}).unify_chunks()
     # round coords since cds coords are float32 which would lead to mismatches
-    ds = ds.assign_coords(
-        x=np.round(ds.x.astype(float), 5), y=np.round(ds.y.astype(float), 5)
-    )
+    ds = ds.assign_coords(x=np.round(ds.x.astype(float), 5), y=np.round(ds.y.astype(float), 5))
     ds = maybe_swap_spatial_dims(ds)
     if add_lon_lat:
         ds = ds.assign_coords(lon=ds.coords["x"], lat=ds.coords["y"])
@@ -101,9 +99,7 @@ def _rename_and_clean_coords(ds, add_lon_lat=True):
     if "expver" in ds.coords:
         unique_expver = np.unique(ds["expver"].values)
         if len(unique_expver) > 1:
-            expver_dim = xr.DataArray(
-                unique_expver, dims=["expver"], coords={"expver": unique_expver}
-            )
+            expver_dim = xr.DataArray(unique_expver, dims=["expver"], coords={"expver": unique_expver})
             ds = (
                 ds.assign_coords({"expver_dim": expver_dim})
                 .drop_vars("expver")
@@ -142,6 +138,25 @@ def get_data_wind(retrieval_params):
     ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
     ds = ds.drop_vars(["u100", "v100"])
     ds = ds.rename({"fsr": "roughness"})
+
+    return ds
+
+
+def get_data_wind_offline(ds):
+    """
+    Get wind data for the supplied xarray ds.
+    """
+
+    ds = _rename_and_clean_coords(ds)
+
+    ds["wnd100m"] = np.sqrt(ds["u100"] ** 2 + ds["v100"] ** 2).assign_attrs(
+        units=ds["u100"].attrs["units"], long_name="100 metre wind speed"
+    )
+    # span the whole circle: 0 is north, π/2 is east, -π is south, 3π/2 is west
+    azimuth = np.arctan2(ds["u100"], ds["v100"])
+    ds["wnd_azimuth"] = azimuth.where(azimuth >= 0, azimuth + 2 * np.pi)
+    ds = ds.rename({"fsr": "roughness"})
+    ds = ds.drop_vars([v for v in ds if v not in features["wind"]])
 
     return ds
 
@@ -201,6 +216,44 @@ def get_data_influx(retrieval_params):
     return ds
 
 
+def get_data_influx_offline(ds):
+    """
+    Get influx data for given for the supplied data ds
+    """
+
+    ds = _rename_and_clean_coords(ds)
+
+    ds = ds.rename({"fdir": "influx_direct", "tisr": "influx_toa"})
+    ds["albedo"] = (
+        ((ds["ssrd"] - ds["ssr"]) / ds["ssrd"].where(ds["ssrd"] != 0))
+        .fillna(0.0)
+        .assign_attrs(units="(0 - 1)", long_name="Albedo")
+    )
+    ds["influx_diffuse"] = (ds["ssrd"] - ds["influx_direct"]).assign_attrs(
+        units="J m**-2", long_name="Surface diffuse solar radiation downwards"
+    )
+    ds = ds.drop_vars([v for v in ds if v not in features["influx"]])
+
+    # Convert from energy to power J m**-2 -> W m**-2 and clip negative fluxes
+    for a in ("influx_direct", "influx_diffuse", "influx_toa"):
+        ds[a] = ds[a] / (60.0 * 60.0)
+        ds[a].attrs["units"] = "W m**-2"
+
+    # ERA5 variables are mean values for previous hour, i.e. 13:01 to 14:00 are labelled as "14:00"
+    # account by calculating the SolarPosition for the center of the interval for aggregation happens
+    # see https://github.com/PyPSA/atlite/issues/158
+    # Do not show DeprecationWarning from new SolarPosition calculation (#199)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        time_shift = pd.to_timedelta("-30 minutes")
+        sp = SolarPosition(ds, time_shift=time_shift)
+    sp = sp.rename({v: f"solar_{v}" for v in sp.data_vars})
+
+    ds = xr.merge([ds, sp])
+
+    return ds
+
+
 def sanitize_influx(ds):
     """
     Sanitize retrieved influx data.
@@ -231,6 +284,17 @@ def get_data_temperature(retrieval_params):
             "d2m": "dewpoint temperature",
         }
     )
+
+    return ds
+
+
+def get_data_temperature_offline(ds):
+    """
+    Get wind temperature for given given data ds.
+    """
+    ds = _rename_and_clean_coords(ds)
+    ds = ds.rename({"t2m": "temperature", "stl4": "soil temperature"})
+    ds = ds.drop_vars([v for v in ds if v not in features["temperature"]])
 
     return ds
 
@@ -337,13 +401,9 @@ def retrieve_data(product, chunks=None, tmpdir=None, lock=None, **updates):
     request = {"product_type": "reanalysis", "format": "netcdf"}
     request.update(updates)
 
-    assert {"year", "month", "variable"}.issubset(
-        request
-    ), "Need to specify at least 'variable', 'year' and 'month'"
+    assert {"year", "month", "variable"}.issubset(request), "Need to specify at least 'variable', 'year' and 'month'"
 
-    client = cdsapi.Client(
-        info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level
-    )
+    client = cdsapi.Client(info_callback=logger.debug, debug=logging.DEBUG >= logging.root.level)
     result = client.retrieve(product, request)
 
     if lock is None:

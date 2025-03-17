@@ -47,7 +47,7 @@ from atlite.convert import (
     temperature,
     wind,
 )
-from atlite.data import available_features, cutout_prepare
+from atlite.data import available_features, cutout_prepare, cutout_prepare_era5_offline
 from atlite.datasets import modules as datamodules
 from atlite.gis import (
     compute_availabilitymatrix,
@@ -159,8 +159,7 @@ class Cutout:
         # Backward compatibility for xs, ys, months and years
         if {"xs", "ys"}.intersection(cutoutparams):
             warn(
-                "The arguments `xs` and `ys` have been deprecated in favour of "
-                "`x` and `y`",
+                "The arguments `xs` and `ys` have been deprecated in favour of " "`x` and `y`",
                 DeprecationWarning,
             )
             if "xs" in cutoutparams:
@@ -170,16 +169,13 @@ class Cutout:
 
         if {"years", "months"}.intersection(cutoutparams):
             warn(
-                "The arguments `years` and `months` have been deprecated in "
-                "favour of `time`",
+                "The arguments `years` and `months` have been deprecated in " "favour of `time`",
                 DeprecationWarning,
             )
             assert "years" in cutoutparams
             months = cutoutparams.pop("months", slice(1, 12))
             years = cutoutparams.pop("years")
-            cutoutparams["time"] = slice(
-                f"{years.start}-{months.start}", f"{years.stop}-{months.stop}"
-            )
+            cutoutparams["time"] = slice(f"{years.start}-{months.start}", f"{years.stop}-{months.stop}")
 
         # Three cases. First, cutout exists -> take the data.
         # Second, data is given -> take it. Third, else -> build a new cutout
@@ -188,12 +184,59 @@ class Cutout:
             data = data.chunk(chunks)
             data.attrs.update(storable_chunks)
             if cutoutparams:
-                warn(
-                    f'Arguments {", ".join(cutoutparams)} are ignored, since '
-                    "cutout is already built."
-                )
+                warn(f'Arguments {", ".join(cutoutparams)} are ignored, since ' "cutout is already built.")
         elif "data" in cutoutparams:
             data = cutoutparams.pop("data")
+
+            data = data.chunk(chunks)
+            data.attrs.update(storable_chunks)
+            x = cutoutparams.pop("x")
+            y = cutoutparams.pop("y")
+            time = cutoutparams.pop("time")
+            module = cutoutparams.pop("module")
+            coords = get_coords(x, y, time, **cutoutparams)
+            attrs = {
+                "module": module,
+                "prepared_features": [],
+                **storable_chunks,
+                **cutoutparams,
+            }
+            # data = data.assign_coords({'x': coords['x'], 'y': coords['y']})
+            data = xr.Dataset(coords=coords, attrs=attrs, data_vars=data.data_vars)
+            logger.debug(attrs)
+            logger.debug(data.attrs)
+            # print(data.attrs)
+            # print(cutoutparams)
+        elif "bulk_path" in cutoutparams:
+            logger.info(f"Building cutout {path} from bulk data download")
+
+            if "bounds" in cutoutparams:
+                x1, y1, x2, y2 = cutoutparams.pop("bounds")
+                cutoutparams.update(x=slice(x1, x2), y=slice(y1, y2))
+
+            try:
+                x = cutoutparams.pop("x")
+                y = cutoutparams.pop("y")
+                time = cutoutparams.pop("time")
+                module = cutoutparams.pop("module")
+            except KeyError as exc:
+                raise TypeError(
+                    "Arguments 'time' and 'module' must be "
+                    "specified. Spatial bounds must either be "
+                    "passed via argument 'bounds' or 'x' and 'y'."
+                ) from exc
+
+            # TODO: check for dx, dy, x, y fine with module requirements
+            coords = get_coords(x, y, time, **cutoutparams)
+
+            attrs = {
+                "module": module,
+                "prepared_features": [],
+                **storable_chunks,
+                **cutoutparams,
+            }
+            data = xr.Dataset(coords=coords, attrs=attrs)
+
         else:
             logger.info(f"Building new cutout {path}")
 
@@ -265,11 +308,7 @@ class Cutout:
         """
         Chunking of the cutout data used by dask.
         """
-        chunks = {
-            k.lstrip("chunksize_"): v
-            for k, v in self.data.attrs.items()
-            if k.startswith("chunksize_")
-        }
+        chunks = {k.lstrip("chunksize_"): v for k, v in self.data.attrs.items() if k.startswith("chunksize_")}
         return None if chunks == {} else chunks
 
     @property
@@ -287,8 +326,7 @@ class Cutout:
         Deprecated since v0.2.
         """
         warn(
-            "The `meta` attribute is deprecated in favour of direct "
-            "access to `data`",
+            "The `meta` attribute is deprecated in favour of direct " "access to `data`",
             DeprecationWarning,
         )
         return xr.Dataset(self.coords, attrs=self.data.attrs)
@@ -307,9 +345,7 @@ class Cutout:
         """
         xs, ys = self.coords["x"].values, self.coords["y"].values
         dx, dy = self.dx, self.dy
-        return np.array(
-            [xs[0] - dx / 2, xs[-1] + dx / 2, ys[0] - dy / 2, ys[-1] + dy / 2]
-        )
+        return np.array([xs[0] - dx / 2, xs[-1] + dx / 2, ys[0] - dy / 2, ys[-1] + dy / 2])
 
     @property
     def bounds(self):
@@ -374,19 +410,14 @@ class Cutout:
         """
         Boolean indicating whether all available features are prepared.
         """
-        return self.prepared_features.sort_index().equals(
-            self.available_features.sort_index()
-        )
+        return self.prepared_features.sort_index().equals(self.available_features.sort_index())
 
     @property
     def prepared_features(self):
         """
         Get the list of prepared features in the cutout.
         """
-        index = [
-            (self.data[v].attrs["module"], self.data[v].attrs["feature"])
-            for v in self.data
-        ]
+        index = [(self.data[v].attrs["module"], self.data[v].attrs["feature"]) for v in self.data]
         index = pd.MultiIndex.from_tuples(index, names=["module", "feature"])
         return pd.Series(list(self.data), index, dtype=object)
 
@@ -653,17 +684,9 @@ class Cutout:
         >>> pv.plot()
         """
         with dask.config.set(**{"array.slicing.split_large_chunks": False}):
-            nearest = (
-                self.uniform_layout()
-                .chunk()
-                .sel({"x": data.x.values, "y": data.y.values}, "nearest")
-            )
+            nearest = self.uniform_layout().chunk().sel({"x": data.x.values, "y": data.y.values}, "nearest")
 
-        data = (
-            data.assign(x=nearest.x.data, y=nearest.y.data)
-            .groupby(["y", "x"])[col]
-            .sum()
-        )
+        data = data.assign(x=nearest.x.data, y=nearest.y.data).groupby(["y", "x"])[col].sum()
         return data.to_xarray().reindex_like(self.data).fillna(0)
 
     availabilitymatrix = compute_availabilitymatrix
@@ -671,6 +694,10 @@ class Cutout:
     # Preparation functions
 
     prepare = cutout_prepare
+
+    # Offline Era5 perparation
+
+    prepare_offline_era5 = cutout_prepare_era5_offline
 
     # Conversion and aggregation functions
 

@@ -15,14 +15,18 @@ from tempfile import mkdtemp, mkstemp
 
 import pandas as pd
 import xarray as xr
+import dask
+
 from dask import compute, delayed
 from dask.diagnostics import ProgressBar
 from dask.utils import SerializableLock
 from numpy import atleast_1d
 
+
 logger = logging.getLogger(__name__)
 
 from atlite.datasets import modules as datamodules
+from atlite.datasets.era5 import get_data_temperature_offline, get_data_wind_offline, get_data_influx_offline, _area
 
 
 def get_features(cutout, module, features, tmpdir=None):
@@ -38,9 +42,7 @@ def get_features(cutout, module, features, tmpdir=None):
     get_data = datamodules[module].get_data
 
     for feature in features:
-        feature_data = delayed(get_data)(
-            cutout, feature, tmpdir=tmpdir, lock=lock, **parameters
-        )
+        feature_data = delayed(get_data)(cutout, feature, tmpdir=tmpdir, lock=lock, **parameters)
         datasets.append(feature_data)
 
     datasets = compute(*datasets)
@@ -71,13 +73,7 @@ def available_features(module=None):
         obtained.
     """
     features = {name: m.features for name, m in datamodules.items()}
-    features = (
-        pd.DataFrame(features)
-        .unstack()
-        .dropna()
-        .rename_axis(index=["module", "feature"])
-        .rename("variables")
-    )
+    features = pd.DataFrame(features).unstack().dropna().rename_axis(index=["module", "feature"]).rename("variables")
     if module is not None:
         features = features.reindex(atleast_1d(module), level="module")
     return features.explode()
@@ -206,5 +202,113 @@ def cutout_prepare(
         os.rename(tmp, cutout.path)
 
         cutout.data = xr.open_dataset(cutout.path, chunks=cutout.chunks)
+
+    return cutout
+
+
+def get_era5_features_offline(cutout, module="era5", features=["wind", "tempearture", "influx"], tmpdir=None):
+    """
+    Load the feature data for a the era5 module.
+
+    This get the data for a set of features from a module. All modules
+    in `atlite.datasets` are allowed.
+    """
+
+    datasets = []
+    ymax, xmin, ymin, xmax = _area(cutout.data.coords)
+
+    data = xr.open_dataset(cutout.data.attrs["bulk_path"])
+
+    for feature in features:
+        func = globals().get(f"get_data_{feature}_offline")
+        # Pass ds_bulk if available; otherwise, fallback to original behavior
+        feature_data = delayed(func)(
+            data.sel(
+                longitude=slice(xmin, xmax),
+                latitude=slice(ymax, ymin),
+            )
+        )
+
+        datasets.append(feature_data)
+    datasets = compute(*datasets, scheduler="processes")
+    ds = xr.merge(datasets, compat="equals")
+
+    for v in ds:
+        ds[v].attrs["module"] = module
+        fd = datamodules[module].features.items()
+        ds[v].attrs["feature"] = [k for k, l in fd if v in l].pop()
+    return ds
+
+
+@maybe_remove_tmpdir
+def cutout_prepare_era5_offline(
+    cutout,
+    features=None,
+    tmpdir=None,
+    overwrite=False,
+    compression={"zlib": True, "complevel": 9, "shuffle": True},
+):
+    """
+    Prepare the feature data for a cutout using pre-downloaded era5 data
+
+    This function loads will prepare the features for a cutout using pre-downloaded era5 data.
+    It'll have very restricted abilities compared to the above function, as it can't download
+    but it should be significantly faster
+
+
+    Parameters
+    ----------
+    cutout : atlite.Cutout
+    features : str/list, optional
+        Feature(s) to be prepared. The default slice(None) results in all
+        available features for now limited to [wind, influx, temperature], the remaining two are yet to be implemented
+    tmpdir : str/Path, optional
+        Directory in which temporary files (for example retrieved ERA5 netcdf
+        files) are stored. If set, the directory will not be deleted and the
+        intermediate files can be examined.
+    overwrite : bool, optional
+        Whether to overwrite variables which are already included in the
+        cutout. The default is False.
+    compression : None/dict, optional
+        Compression level to use for all features which are being prepared.
+        The compression is handled via xarray.Dataset.to_netcdf(...), for details see:
+        https://docs.xarray.dev/en/stable/generated/xarray.Dataset.to_netcdf.html .
+        To efficiently reduce cutout sizes, specify the number of 'least_significant_digits': n here.
+        To disable compression, set "complevel" to None.
+        Default is {'zlib': True, 'complevel': 9, 'shuffle': True}.
+
+    Returns
+    -------
+    cutout : atlite.Cutout
+        Cutout with prepared data. The variables are stored in `cutout.data`.
+    """
+    logger.info("You have chosen to engage the era5 offline data preparation")
+    logger.debug(cutout.prepared)
+
+    if cutout.prepared and not overwrite:
+        logger.info("Cutout already prepared.")
+        return cutout
+
+    logger.info(f"Storing temporary files in {tmpdir}")
+
+    features = atleast_1d(features) if features else slice(None)
+
+    # target is series of all available variables for given module and features
+    parameters = cutout.data.attrs
+
+    print("has the error been thrown at this point? line 311")
+
+    # we short-cut to go quickly to the offline data preparation
+    module = "era5"
+    missing_features = features
+
+    ds = get_era5_features_offline(cutout, module, missing_features, tmpdir=tmpdir)
+    print("has the error been thrown at this point? line 319")
+
+    cutout.data.attrs.update(dict(prepared_features=features))
+    attrs = non_bool_dict(cutout.data.attrs)
+    attrs.update(ds.attrs)
+    ds = ds.assign_attrs(**attrs)
+    cutout.data = ds
 
     return cutout
